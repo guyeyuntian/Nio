@@ -1,9 +1,9 @@
-package com.aio.test.client;
+package com.aio.server;
 
 /**
  * Created by sunxuechao on 2017/2/16.
  */
-public class TimeClient {
+public class TimeServer {
     public static void main(String[] args) {
         int port = 8080;
         if (args != null && args.length > 0) {
@@ -13,6 +13,7 @@ public class TimeClient {
                 e.printStackTrace();
             }
         }
-        new Thread(new AsyncTimeClientHandler("127.0.0.1", port), "AIO-AsyncTImerServerHandler-001").start();
+        AsyncTimerServerHandler timeServer = new AsyncTimerServerHandler(port);
+        new Thread(timeServer, "AIO-AsyncTImerServerHandler-001").start();
     }
 }

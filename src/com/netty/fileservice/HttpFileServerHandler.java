@@ -1,10 +1,14 @@
 package com.netty.fileservice;
 
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.RandomAccessFile;
+import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.nio.file.Files;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
+import java.util.regex.Pattern;
 
 import javax.activation.MimetypesFileTypeMap;
 
@@ -27,38 +31,45 @@ public class HttpFileServerHandler extends SimpleChannelInboundHandler<FullHttpR
     private String localDir;
 
     private static SimpleDateFormat sdf = new SimpleDateFormat("YYYY-MM-dd HH:mm:ss");
-
+    private static final Pattern INSECURE_URI = Pattern.compile(".*[<>&\"].");
 
     public HttpFileServerHandler(String localDir) {
         this.localDir = localDir;
     }
 
-    public static final HttpVersion HTTP_1_1 = new HttpVersion("HTTP", 1, 1, true);
+    //public static final HttpVersion HTTP_1_1 = new HttpVersion("HTTP", 1, 1, true);
 
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) throws Exception {
+    protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest request) throws Exception {
         //解码不成功
-        if (!req.decoderResult().isSuccess()) {
+        if (!request.decoderResult().isSuccess()) {
             sendErrorToClient(ctx, HttpResponseStatus.BAD_REQUEST);
             return;
         }
-        if (req.method().compareTo(HttpMethod.GET) != 0) {
+        if (request.method().compareTo(HttpMethod.GET) != 0) {
             sendErrorToClient(ctx, HttpResponseStatus.METHOD_NOT_ALLOWED);
             return;
         }
-        String uri = req.uri();
-        uri = URLDecoder.decode(uri, "utf-8");
+        String uri = request.uri();
         String filePath = getFilePath(uri);
+        if (filePath == null) {
+            sendErrorToClient(ctx, HttpResponseStatus.FORBIDDEN);
+            return;
+        }
         File file = new File(filePath);
         //如果文件不存在
-        if (!file.exists()) {
+        if (!file.exists() || file.isHidden()) {
             sendErrorToClient(ctx, HttpResponseStatus.NOT_FOUND);
             return;
         }
         //如果是目录，则显示子目录
         if (file.isDirectory()) {
-            sendDirListToClient(ctx, file, uri);
+            if (uri.endsWith("/")) {
+                sendDirListToClient(ctx, file, uri);
+            } else {
+                sendRedirct(ctx, uri + '/');
+            }
             return;
         }
         //如果是文件，则将文件流写到客户端
@@ -69,15 +80,41 @@ public class HttpFileServerHandler extends SimpleChannelInboundHandler<FullHttpR
         ctx.close();
     }
 
+    private void sendRedirct(ChannelHandlerContext ctx, String newUri) {
+        FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.FOUND);
+        response.headers().set(HttpHeaderNames.LOCATION, newUri);
+        ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+    }
+
     public String getFilePath(String uri) throws Exception {
-        return localDir + uri;
+        try {
+            uri = URLDecoder.decode(uri, "utf-8");
+        } catch (UnsupportedEncodingException e) {
+            try {
+                uri = URLDecoder.decode(uri, "ISO-8859-1");
+            } catch (UnsupportedEncodingException e1) {
+                e1.printStackTrace();
+            }
+        }
+        if (!uri.startsWith(localDir)) {
+            return null;
+        }
+        if (!uri.startsWith("/")) {
+            return null;
+        }
+        uri = uri.replace('/', File.separatorChar);
+        if (uri.contains(File.separator + '.') || uri.contains("." + File.separatorChar) || uri.startsWith(".") ||
+                uri.endsWith(".") || INSECURE_URI.matcher(uri).matches()) {
+            return null;
+        }
+        return System.getProperty("user.dir") + File.separator + uri;
     }
 
     private void sendErrorToClient(ChannelHandlerContext ctx, HttpResponseStatus status) throws Exception {
         ByteBuf buffer = Unpooled.copiedBuffer(("系统服务出错：" + status.toString() + CRLF).getBytes("utf-8"));
-        FullHttpResponse resp = new DefaultFullHttpResponse(HTTP_1_1, status, buffer);
-        resp.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/html;charset=utf-8");
-        ctx.writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
+        FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, buffer);
+        response.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/html;charset=utf-8");
+        ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 
     private void sendDirListToClient(ChannelHandlerContext ctx, File dir, String uri) throws Exception {
@@ -92,7 +129,7 @@ public class HttpFileServerHandler extends SimpleChannelInboundHandler<FullHttpR
         sb.append("当前目录:" + dirpath);
         sb.append("</h3>");
         sb.append("<table>");
-        sb.append("<tr><td colspan='3'>上一级:<a href=\"../\">..</a>  </td></tr>");
+        sb.append("<tr><td colspan='3'>上一级: <a href=\"../\">..</a>  </td></tr>");
         if (uri.equals("/")) {
             uri = "";
         } else {
@@ -123,17 +160,24 @@ public class HttpFileServerHandler extends SimpleChannelInboundHandler<FullHttpR
         }
         sb.append("</table>");
         ByteBuf buffer = Unpooled.copiedBuffer(sb.toString(), CharsetUtil.UTF_8);
-        FullHttpResponse resp = new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.OK, buffer);
+        FullHttpResponse resp = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, buffer);
         resp.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/html;charset=utf-8");
         ctx.writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
     }
 
     private void sendFileToClient(ChannelHandlerContext ctx, File file, String uri) throws Exception {
-        ByteBuf buffer = Unpooled.copiedBuffer(Files.readAllBytes(file.toPath()));
-        FullHttpResponse resp = new DefaultFullHttpResponse(HTTP_1_1, HttpResponseStatus.OK, buffer);
+//        RandomAccessFile randomAccessFile = null;
+//        try {
+//            randomAccessFile = new RandomAccessFile(file,"r");
+//        } catch (FileNotFoundException e) {
+//            sendErrorToClient(ctx, HttpResponseStatus.NOT_FOUND);
+//            return;
+//        }
         MimetypesFileTypeMap mimeTypeMap = new MimetypesFileTypeMap();
-        resp.headers().set(HttpHeaderNames.CONTENT_TYPE, mimeTypeMap.getContentType(file));
-        ctx.writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
+        ByteBuf buffer = Unpooled.copiedBuffer(Files.readAllBytes(file.toPath()));
+        FullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, buffer);
+        response.headers().set(HttpHeaderNames.CONTENT_TYPE, mimeTypeMap.getContentType(file.getPath()));
+        ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 
 

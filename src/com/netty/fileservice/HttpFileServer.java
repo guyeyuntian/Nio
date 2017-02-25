@@ -54,7 +54,7 @@ public class HttpFileServer {
         String url = DEFAULT_URL;
         if (args.length > 1) {
             url = args[1];
-            new HttpFileServer().run(port, url);
         }
+        new HttpFileServer().run(port, url);
     }
 }
