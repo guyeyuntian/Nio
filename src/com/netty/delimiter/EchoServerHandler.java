@@ -1,4 +1,4 @@
-package com.netty.test1;
+package com.netty.delimiter;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;

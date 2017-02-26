@@ -1,4 +1,4 @@
-package com.netty.test1;
+package com.netty.delimiter;
 
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
@@ -30,7 +30,7 @@ public class EchoClient {
                             ByteBuf delimiter = Unpooled.copiedBuffer("$_".getBytes());
                             socketChannel.pipeline().addLast(new DelimiterBasedFrameDecoder(1024, delimiter));
                             socketChannel.pipeline().addLast(new StringDecoder());
-                            socketChannel.pipeline().addLast(new EchoClientHandler());
+                            socketChannel.pipeline().addLast(new com.netty.test1.EchoClientHandler());
                         }
                     });
             //发起异步连接操作
